@@ -2,3 +2,7 @@ statusline-cache.json
 codex-update.log
 *.bak
 node_modules/
+# claude-statusline
+/.claude/settings.local.json
+/.claude/statusline.cjs
+/.claude/codex-auto-update.cjs

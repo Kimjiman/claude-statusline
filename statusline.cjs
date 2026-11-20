@@ -24,6 +24,12 @@ const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 // Windows의 Git Bash에서는 GNU tar가 먼저 잡혀 Codex 설치가 실패하므로 System32를 PATH 앞에 둔다
 const CODEX_UPDATE_CMD = process.platform === 'win32' ? 'PATH="/c/Windows/System32:$PATH" codex update' : 'codex update';
 const BAR = 20;
+// 터미널이 이보다 작으면 블록마다 한 줄로 줄여 3줄로 보여 준다 (Claude Code가 COLUMNS·LINES로 현재 크기를 넘겨준다)
+const COMPACT_MAX_COLS = 80, COMPACT_MAX_LINES = 25;
+const isCompact = () => {
+  const cols = +process.env.COLUMNS, rows = +process.env.LINES;
+  return (cols > 0 && cols < COMPACT_MAX_COLS) || (rows > 0 && rows < COMPACT_MAX_LINES);
+};
 
 let raw = '';
 process.stdin.on('data', c => (raw += c));
@@ -31,7 +37,8 @@ process.stdin.on('end', () => {
   let j = {};
   try { j = JSON.parse(raw || '{}'); } catch {}
   const versions = readVersions();
-  const lines = [headerLine(j), ...claudeBlock(j, versions), ...codexBlock(versions)];
+  const compact = isCompact();
+  const lines = [headerLine(j), ...claudeBlock(j, versions, compact), ...codexBlock(versions, compact)];
   process.stdout.write(lines.join('\n'));
 });
 
@@ -80,6 +87,12 @@ const blockHead = (color, icon, name, model) =>
   WHITE + BOLD + '╭─ ' + RESET + color + BOLD + icon + ' ' + name.padEnd(6) + RESET + WHITE + BOLD + ' │' + RESET + ' ' + WHITE + modelText(model) + RESET;
 // 블록 몸통: 마지막 줄만 ╰ 로 닫는다
 const blockBody = rows => rows.map((r, i) => WHITE + BOLD + (i === rows.length - 1 ? '╰' : '│') + RESET + ' ' + r);
+// 작은 화면용 한 줄: "✻ 모델 │ 🧠 37%  ⏳ 21%  📅 41%" (업데이트가 있으면 끝에 ⬆)
+const shownPct = (pct, resetsAt) => (pct == null ? null : resetsAt && resetsAt < Date.now() / 1000 ? 0 : Math.round(pct));
+const miniItem = (icon, p, empty) => icon + ' ' + (p == null ? WHITE + String(empty).padStart(3) + ' ' + RESET : pctText(p));
+const compactLine = (color, icon, model, items, update) =>
+  color + BOLD + icon + RESET + ' ' + WHITE + modelText(model) + RESET + WHITE + BOLD + ' │' + RESET + ' ' + items.join('  ')
+  + (update ? '  ' + PURPLE + '⬆' + RESET : '');
 
 // ───────────── 1줄: 프로젝트·브랜치·경과 시간 ─────────────
 function headerLine(j) {
@@ -111,7 +124,7 @@ function gitInfo(dir) {
 }
 
 // ───────────── Claude 블록 ─────────────
-function claudeBlock(j, versions) {
+function claudeBlock(j, versions, compact) {
   const cw = j.context_window || {};
   const model = ((j.model && (j.model.id || j.model.display_name)) || '?') + (j.effort && j.effort.level ? '(' + j.effort.level + ')' : '');
 
@@ -162,6 +175,10 @@ function claudeBlock(j, versions) {
     usageRow('📅', '7D', r7.used_percentage, r7.resets_at, true),
   ];
   const upd = claudeUpdateHint(j.version, versions);
+  if (compact) {
+    return [compactLine(ORANGE, '✻', model, [miniItem('🧠', pct, '-'),
+      miniItem('⏳', shownPct(r5.used_percentage, r5.resets_at), '?'), miniItem('📅', shownPct(r7.used_percentage, r7.resets_at), '?')], upd)];
+  }
   if (upd) rows.push(upd);
   return [blockHead(ORANGE, '✻', 'Claude', model), ...blockBody(rows)];
 }
@@ -180,7 +197,7 @@ function claudeUpdateHint(running, v) {
 }
 
 // ───────────── Codex 블록 ─────────────
-function codexBlock(versions) {
+function codexBlock(versions, compact) {
   if (!fs.existsSync(CODEX_HOME)) return [];
   const rl = codexRateLimits() || {};
   const p = rl.primary || {}, s = rl.secondary || {};
@@ -189,7 +206,12 @@ function codexBlock(versions) {
     usageRow('📅', '7D', s.used_percent, s.resets_at, true),
   ];
   const { codexInstalled, codexLatest } = versions;
-  if (codexInstalled && codexLatest && isNewer(codexLatest, codexInstalled)) {
+  const hasUpdate = codexInstalled && codexLatest && isNewer(codexLatest, codexInstalled);
+  if (compact) {
+    return [compactLine(CODEX_TEAL, '◈', codexModel(), [miniItem('⏳', shownPct(p.used_percent, p.resets_at), '?'),
+      miniItem('📅', shownPct(s.used_percent, s.resets_at), '?')], hasUpdate)];
+  }
+  if (hasUpdate) {
     rows.push(PURPLE + '⬆ ' + codexInstalled + ' → ' + codexLatest + RESET + '   ' + WHITE + BOLD + '! ' + CODEX_UPDATE_CMD + RESET);
   }
   return [blockHead(CODEX_TEAL, '◈', 'Codex', codexModel()), ...blockBody(rows)];
