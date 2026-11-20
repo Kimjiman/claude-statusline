@@ -1,0 +1,4 @@
+statusline-cache.json
+codex-update.log
+*.bak
+node_modules/
