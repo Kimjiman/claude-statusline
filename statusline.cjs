@@ -125,6 +125,12 @@ function claudeBlock(j, versions) {
       const lines = fs.readFileSync(j.transcript_path, 'utf8').trim().split('\n');
       for (let i = lines.length - 1; i >= 0; i--) {
         const row = JSON.parse(lines[i]);
+        // 압축 직후: 아직 API 호출 전이라 usage가 없으므로 압축 결과 토큰 수를 쓴다
+        if (row.type === 'system' && row.subtype === 'compact_boundary') {
+          const post = row.compactMetadata && row.compactMetadata.postTokens;
+          if (post != null) used = post;
+          break;
+        }
         const u = row.message && row.message.usage;
         if (u && !row.isSidechain) {
           used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
@@ -135,7 +141,8 @@ function claudeBlock(j, versions) {
   }
   // 창 크기를 못 받았는데 200k를 넘었다면 1M 창으로 본다
   if (!cw.context_window_size && used > size) size = 1e6;
-  const pct = cw.used_percentage != null ? Math.round(cw.used_percentage)
+  // current_usage가 없으면(압축 직후 등) used_percentage는 0으로 오므로 기록에서 구한 값을 우선한다
+  const pct = cw.used_percentage != null && cu ? Math.round(cw.used_percentage)
     : used != null ? Math.round((used / size) * 100) : null;
   const ctxRow = pct == null
     ? label('🧠', 'Context') + ' ' + emptyBar() + '     ' + WHITE + '-' + RESET
